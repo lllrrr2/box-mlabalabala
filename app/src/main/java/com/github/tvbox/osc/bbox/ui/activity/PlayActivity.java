@@ -16,29 +16,16 @@ import android.text.TextUtils;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
-import android.webkit.ConsoleMessage;
-import android.webkit.CookieManager;
-import android.webkit.JsPromptResult;
-import android.webkit.JsResult;
-import android.webkit.SslErrorHandler;
-import android.webkit.ValueCallback;
-import android.webkit.WebChromeClient;
-import android.webkit.WebResourceRequest;
-import android.webkit.WebResourceResponse;
-import android.webkit.WebSettings;
-import android.webkit.WebView;
-import android.webkit.WebViewClient;
+import android.webkit.*;
 import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
-
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.lifecycle.Observer;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.recyclerview.widget.DiffUtil;
-
 import com.github.catvod.crawler.Spider;
 import com.github.tvbox.osc.bbox.R;
 import com.github.tvbox.osc.bbox.api.ApiConfig;
@@ -55,18 +42,12 @@ import com.github.tvbox.osc.bbox.player.MyVideoView;
 import com.github.tvbox.osc.bbox.player.TrackInfo;
 import com.github.tvbox.osc.bbox.player.TrackInfoBean;
 import com.github.tvbox.osc.bbox.player.controller.VodController;
+import com.github.tvbox.osc.bbox.server.ControlManager;
 import com.github.tvbox.osc.bbox.ui.adapter.SelectDialogAdapter;
 import com.github.tvbox.osc.bbox.ui.dialog.SearchSubtitleDialog;
 import com.github.tvbox.osc.bbox.ui.dialog.SelectDialog;
 import com.github.tvbox.osc.bbox.ui.dialog.SubtitleDialog;
-import com.github.tvbox.osc.bbox.util.AdBlocker;
-import com.github.tvbox.osc.bbox.util.DefaultConfig;
-import com.github.tvbox.osc.bbox.util.HawkConfig;
-import com.github.tvbox.osc.bbox.util.LOG;
-import com.github.tvbox.osc.bbox.util.MD5;
-import com.github.tvbox.osc.bbox.util.PlayerHelper;
-import com.github.tvbox.osc.bbox.util.VideoParseRuler;
-import com.github.tvbox.osc.bbox.util.XWalkUtils;
+import com.github.tvbox.osc.bbox.util.*;
 import com.github.tvbox.osc.bbox.util.thunder.Jianpian;
 import com.github.tvbox.osc.bbox.util.thunder.Thunder;
 import com.github.tvbox.osc.bbox.viewmodel.SourceViewModel;
@@ -76,37 +57,24 @@ import com.lzy.okgo.model.HttpHeaders;
 import com.lzy.okgo.model.Response;
 import com.obsez.android.lib.filechooser.ChooserDialog;
 import com.orhanobut.hawk.Hawk;
-
+import me.jessyan.autosize.AutoSize;
 import org.greenrobot.eventbus.EventBus;
 import org.jetbrains.annotations.NotNull;
 import org.json.JSONException;
 import org.json.JSONObject;
-import org.xwalk.core.XWalkJavascriptResult;
-import org.xwalk.core.XWalkResourceClient;
-import org.xwalk.core.XWalkSettings;
-import org.xwalk.core.XWalkUIClient;
-import org.xwalk.core.XWalkView;
-import org.xwalk.core.XWalkWebResourceRequest;
-import org.xwalk.core.XWalkWebResourceResponse;
-
-import java.io.ByteArrayInputStream;
-import java.io.File;
-import java.net.URLEncoder;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicInteger;
-
-import me.jessyan.autosize.AutoSize;
+import org.xwalk.core.*;
 import tv.danmaku.ijk.media.player.IMediaPlayer;
 import tv.danmaku.ijk.media.player.IjkTimedText;
 import xyz.doikki.videoplayer.player.AbstractPlayer;
 import xyz.doikki.videoplayer.player.ProgressManager;
+
+import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.net.URLEncoder;
+import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class PlayActivity extends BaseActivity {
     private MyVideoView mVideoView;
@@ -499,15 +467,15 @@ public class PlayActivity extends BaseActivity {
         if(autoRetryCount>1 && url.contains(".m3u8")){
             url="http://home.jundie.top:666/unBom.php?m3u8="+url;//尝试去bom头再次播放
         }
-        String finalUrl = url;
+        final String finalUrl = url;
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
                 stopParse();
                 if (mVideoView != null) {
                     mVideoView.release();
-
                     if (finalUrl != null) {
+                        String url =finalUrl;
                         try {
                             int playerType = mVodPlayerCfg.getInt("pl");
                             if (playerType >= 10) {
@@ -516,7 +484,7 @@ public class PlayActivity extends BaseActivity {
                                 setTip("调用外部播放器" + PlayerHelper.getPlayerName(playerType) + "进行播放", true, false);
                                 boolean callResult = false;
                                 long progress = getSavedProgress(progressKey);
-                                callResult = PlayerHelper.runExternalPlayer(playerType, PlayActivity.this, finalUrl, playTitle, playSubtitle, headers, progress);
+                                callResult = PlayerHelper.runExternalPlayer(playerType, PlayActivity.this, url, playTitle, playSubtitle, headers, progress);
                                 setTip("调用外部播放器" + PlayerHelper.getPlayerName(playerType) + (callResult ? "成功" : "失败"), callResult, !callResult);
                                 return;
                             }
@@ -524,12 +492,20 @@ public class PlayActivity extends BaseActivity {
                             e.printStackTrace();
                         }
                         hideTip();
-                        PlayerHelper.updateCfg(mVideoView, mVodPlayerCfg);
+                        if (url.startsWith("data:application/dash+xml;base64,")) {
+                            PlayerHelper.updateCfg(mVideoView, mVodPlayerCfg, 2);
+                            App.getInstance().setDashData(url.split("base64,")[1]);
+                            url = ControlManager.get().getAddress(true) + "dash/proxy.mpd";
+                        } else if (url.contains(".mpd") || url.contains("type=mpd")) {
+                            PlayerHelper.updateCfg(mVideoView, mVodPlayerCfg, 2);
+                        } else {
+                            PlayerHelper.updateCfg(mVideoView, mVodPlayerCfg);
+                        }
                         mVideoView.setProgressKey(progressKey);
                         if (headers != null) {
-                            mVideoView.setUrl(finalUrl, headers);
+                            mVideoView.setUrl(url, headers);
                         } else {
-                            mVideoView.setUrl(finalUrl);
+                            mVideoView.setUrl(url);
                         }
                         mVideoView.start();
                         mController.resetSpeed();
@@ -568,18 +544,21 @@ public class PlayActivity extends BaseActivity {
             } else {
                 if (mController.mSubtitleView.hasInternal) {
                     mController.mSubtitleView.isInternal = true;
-                    if (trackInfo != null) {
+                    if (trackInfo != null && trackInfo.getSubtitle().size()>0) {
                         List<TrackInfoBean> subtitleTrackList = trackInfo.getSubtitle();
                         int selectedIndex = trackInfo.getSubtitleSelected(true);
+                        boolean hasCh =false;
                         for(TrackInfoBean subtitleTrackInfoBean : subtitleTrackList) {
                             String lowerLang = subtitleTrackInfoBean.language.toLowerCase();
                             if (lowerLang.startsWith("zh") || lowerLang.startsWith("ch")) {
+                                hasCh=true;
                                 if (selectedIndex != subtitleTrackInfoBean.index) {
                                     ((IjkMediaPlayer)(mVideoView.getMediaPlayer())).setTrack(subtitleTrackInfoBean.index);
                                     break;
                                 }
                             }
                         }
+                        if(!hasCh)((IjkMediaPlayer)(mVideoView.getMediaPlayer())).setTrack(subtitleTrackList.get(0).index);
                     }
                 }
             }
@@ -599,7 +578,30 @@ public class PlayActivity extends BaseActivity {
                         playSubtitle = info.optString("subt", /*"https://dash.akamaized.net/akamai/test/caption_test/ElephantsDream/ElephantsDream_en.vtt"*/"");
                         if(playSubtitle.isEmpty() && info.has("subs")) {
                             try {
-                                playSubtitle = info.getJSONArray("subs").optJSONObject(0).optString("url", "");
+                                JSONObject obj =info.getJSONArray("subs").optJSONObject(0);
+                                String url = obj.optString("url", "");
+                                if (!TextUtils.isEmpty(url) && !FileUtils.hasExtension(url)) {
+                                    String format = obj.optString("format", "");
+                                    String name = obj.optString("name", "字幕");
+                                    String ext = ".srt";
+                                    switch (format) {
+                                        case "text/x-ssa":
+                                            ext = ".ass";
+                                            break;
+                                        case "text/vtt":
+                                            ext = ".vtt";
+                                            break;
+                                        case "application/x-subrip":
+                                            ext = ".srt";
+                                            break;
+                                        case "text/lrc":
+                                            ext = ".lrc";
+                                            break;
+                                    }
+                                    String filename = name + (name.toLowerCase().endsWith(ext) ? "" : ext);
+                                    url += "#" + URLEncoder.encode(filename);
+                                }
+                                playSubtitle = url;
                             } catch (Throwable th) {
                             }
                         }
@@ -641,12 +643,9 @@ public class PlayActivity extends BaseActivity {
                             playUrl(playUrl + url, headers);
                         }
                     } catch (Throwable th) {
-//                        errorWithRetry("获取播放信息错误", true);
-//                        Toast.makeText(mContext, "获取播放信息错误1", Toast.LENGTH_SHORT).show();
                     }
                 } else {
                     errorWithRetry("获取播放信息错误", true);
-//                    Toast.makeText(mContext, "获取播放信息错误", Toast.LENGTH_SHORT).show();
                 }
             }
         });
@@ -745,6 +744,7 @@ public class PlayActivity extends BaseActivity {
         stopParse();
         Thunder.stop(false);//停止磁力下载
         Jianpian.finish();//停止p2p下载
+        App.getInstance().setDashData(null);
     }
 
     private VodInfo mVodInfo;
@@ -833,6 +833,17 @@ public class PlayActivity extends BaseActivity {
         if (reset) {
             CacheManager.delete(MD5.string2MD5(progressKey), 0);
             CacheManager.delete(MD5.string2MD5(subtitleCacheKey), 0);
+        }else{
+            try{
+                int playerType = mVodPlayerCfg.getInt("pl");
+                if(playerType==1){
+                    mController.mSubtitleView.setVisibility(View.VISIBLE);
+                }else {
+                    mController.mSubtitleView.setVisibility(View.GONE);
+                }
+            }catch (JSONException e) {
+                e.printStackTrace();
+            }
         }
         if(Jianpian.isJpUrl(vs.url)){//荐片地址特殊判断
             String jp_url= vs.url;
@@ -1113,7 +1124,7 @@ public class PlayActivity extends BaseActivity {
             LinkedHashMap<String, HashMap<String, String>> jxs = new LinkedHashMap<>();
             String extendName = "";
             for (ParseBean p : ApiConfig.get().getParseBeanList()) {
-                HashMap data = new HashMap<String, String>();
+                HashMap<String, String> data = new HashMap<String, String>();
                 data.put("url", p.getUrl());
                 if (p.getUrl().equals(pb.getUrl())) {
                     extendName = p.getName();
@@ -1297,10 +1308,14 @@ public class PlayActivity extends BaseActivity {
         if (url.contains("url=http") || url.contains(".html")) {
             return false;
         }
-        if (sourceBean.getType() == 3) {
-            Spider sp = ApiConfig.get().getCSP(sourceBean);
-            if (sp != null && sp.manualVideoCheck())
-                return sp.isVideoFormat(url);
+        try {
+            if (sourceBean.getType() == 3) {
+                Spider sp = ApiConfig.get().getCSP(sourceBean);
+                if (sp != null && sp.manualVideoCheck())
+                    return sp.isVideoFormat(url);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
         }
         return VideoParseRuler.checkIsVideoForParse(webUrl, url);
     }
@@ -1692,5 +1707,4 @@ public class PlayActivity extends BaseActivity {
             callback.onReceiveValue(true);
         }
     }
-
 }
